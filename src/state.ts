@@ -3,6 +3,21 @@ import { readFile, writeFile } from "node:fs/promises";
 import { ensureParentDirectory, sessionStatePath } from "./config.js";
 import type { SessionState } from "./types.js";
 
+const DEBUG_ENABLED = process.env.OM_DEBUG === "1";
+
+function debugLog(message: string, details?: Record<string, unknown>): void {
+  if (!DEBUG_ENABLED) {
+    return;
+  }
+
+  if (details) {
+    console.error(`[om][state] ${message}`, details);
+    return;
+  }
+
+  console.error(`[om][state] ${message}`);
+}
+
 export function createDefaultState(sessionId: string): SessionState {
   return {
     sessionId,
@@ -25,7 +40,7 @@ export async function loadSessionState(
   try {
     const raw = await readFile(path, "utf8");
     const parsed = JSON.parse(raw) as Partial<SessionState>;
-    return {
+    const nextState = {
       sessionId,
       observations: typeof parsed.observations === "string" ? parsed.observations : "",
       observationTokens:
@@ -47,7 +62,15 @@ export async function loadSessionState(
           ? parsed.updatedAt
           : Date.now(),
     };
-  } catch {
+
+    return nextState;
+  } catch (error) {
+    debugLog("state load failed; returning default", {
+      sessionId,
+      path,
+      error: error instanceof Error ? error.message : String(error),
+    });
+
     return createDefaultState(sessionId);
   }
 }
@@ -59,16 +82,10 @@ export async function saveSessionState(
   const path = sessionStatePath(stateDir, state.sessionId);
   await ensureParentDirectory(path);
 
-  await writeFile(
-    path,
-    `${JSON.stringify(
-      {
-        ...state,
-        updatedAt: Date.now(),
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
+  const persistedState = {
+    ...state,
+    updatedAt: Date.now(),
+  };
+
+  await writeFile(path, `${JSON.stringify(persistedState, null, 2)}\n`, "utf8");
 }

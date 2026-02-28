@@ -4,10 +4,12 @@ export interface OMConfig {
   observation: {
     messageTokens: number;
     model: string;
+    customInstruction?: string;
   };
   reflection: {
     observationTokens: number;
     model: string;
+    customInstruction?: string;
   };
   api: {
     baseURL?: string;

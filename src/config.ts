@@ -19,10 +19,12 @@ interface PartialConfig {
   observation?: {
     messageTokens?: unknown;
     model?: unknown;
+    customInstruction?: unknown;
   };
   reflection?: {
     observationTokens?: unknown;
     model?: unknown;
+    customInstruction?: unknown;
   };
   api?: {
     baseURL?: unknown;
@@ -52,12 +54,14 @@ export async function loadConfig(worktree: string): Promise<OMConfig> {
         asPositiveInteger(merged.observation?.messageTokens) ??
         DEFAULTS.observation.messageTokens,
       model: asString(merged.observation?.model) ?? DEFAULTS.observation.model,
+      customInstruction: asString(merged.observation?.customInstruction),
     },
     reflection: {
       observationTokens:
         asPositiveInteger(merged.reflection?.observationTokens) ??
         DEFAULTS.reflection.observationTokens,
       model: asString(merged.reflection?.model) ?? DEFAULTS.reflection.model,
+      customInstruction: asString(merged.reflection?.customInstruction),
     },
     api: {
       baseURL: asString(merged.api?.baseURL) ?? process.env.OM_API_BASE_URL,

@@ -1,38 +1,26 @@
 import OpenAI from "openai";
+import {
+  buildObserverSystemPrompt,
+  buildReflectorSystemPrompt,
+  OBSERVATION_CONTINUATION_HINT,
+} from "./prompts.js";
 import { serializeMessage } from "./tokens.js";
 import type { OMConfig, ObserverResult, SessionMessage } from "./types.js";
 
-const OBSERVER_PROMPT = `You are the Observer for an append-log observational memory system.
+const DEBUG_ENABLED = process.env.OM_DEBUG === "1";
 
-Convert the provided conversation slice into dense event observations.
+function debugLog(message: string, details?: Record<string, unknown>): void {
+  if (!DEBUG_ENABLED) {
+    return;
+  }
 
-Rules:
-1) Output MUST use this exact structure:
-Date: YYYY-MM-DD
-- 🔴 HH:MM <critical observation>
-- 🟡 HH:MM <important observation>
-- 🟢 HH:MM <minor observation>
+  if (details) {
+    console.error(`[om][agents] ${message}`, details);
+    return;
+  }
 
-Current task: <what the assistant is currently working on>
-Suggested response: <how the assistant should continue in the next turn>
-
-2) Observations must be factual, concrete, and operationally useful.
-3) Preserve decisions, constraints, rejected approaches, and invariants.
-4) Keep event-log style bullets, never prose paragraphs.
-5) Prefer concise bullets with high information density.`;
-
-const REFLECTOR_PROMPT = `You are the Reflector for an append-log observational memory system.
-
-You will receive the full observation log. Reorganize it into a tighter, de-duplicated event log while preserving all critical information.
-
-Rules:
-1) Preserve event-log structure and priority tags (🔴 🟡 🟢).
-2) Merge related observations and drop superseded/redundant details.
-3) Keep explicit decisions, constraints, and current trajectory.
-4) Do NOT convert to prose summary.
-5) Preserve date headers and timeline semantics.
-
-Output only the updated observation log.`;
+  console.error(`[om][agents] ${message}`);
+}
 
 export class ObservationAgents {
   private readonly client: OpenAI;
@@ -50,25 +38,49 @@ export class ObservationAgents {
     });
   }
 
-  async observe(messages: SessionMessage[]): Promise<ObserverResult> {
-    const conversation = messages.map(serializeMessage).join("\n\n");
+  async observe(input: {
+    existingObservations: string;
+    messages: SessionMessage[];
+    customInstruction?: string;
+    includeContinuationHint?: boolean;
+  }): Promise<ObserverResult> {
+    const conversation = input.messages.map(serializeMessage).join("\n\n");
+    const systemPrompt = buildObserverSystemPrompt(
+      input.customInstruction ?? this.config.observation.customInstruction,
+    );
+    const userPrompt = [
+      "Current observations:",
+      input.existingObservations.trim() || "(none)",
+      "",
+      "New messages:",
+      conversation,
+      input.includeContinuationHint ? `\n${OBSERVATION_CONTINUATION_HINT}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
     const raw = await this.complete({
       model: this.config.observation.model,
-      systemPrompt: OBSERVER_PROMPT,
-      userPrompt: `Conversation slice:\n\n${conversation}`,
+      systemPrompt,
+      userPrompt,
     });
 
     return parseObserverOutput(raw);
   }
 
-  async reflect(observations: string): Promise<string> {
+  async reflect(input: {
+    observations: string;
+    customInstruction?: string;
+  }): Promise<ObserverResult> {
     const raw = await this.complete({
       model: this.config.reflection.model,
-      systemPrompt: REFLECTOR_PROMPT,
-      userPrompt: `Observation log:\n\n${observations}`,
+      systemPrompt: buildReflectorSystemPrompt(
+        input.customInstruction ?? this.config.reflection.customInstruction,
+      ),
+      userPrompt: `Current observations:\n\n${input.observations}`,
     });
 
-    return raw.trim();
+    return parseObserverOutput(raw);
   }
 
   private async complete(input: {
@@ -76,27 +88,48 @@ export class ObservationAgents {
     systemPrompt: string;
     userPrompt: string;
   }): Promise<string> {
-    const response = await this.client.chat.completions.create({
-      model: input.model,
-      temperature: 0.2,
-      messages: [
-        {
-          role: "system",
-          content: input.systemPrompt,
-        },
-        {
-          role: "user",
-          content: input.userPrompt,
-        },
-      ],
-    });
+    try {
+      const response = await this.client.chat.completions.create({
+        model: input.model,
+        temperature: 0.2,
+        messages: [
+          { role: "system", content: input.systemPrompt },
+          { role: "user", content: input.userPrompt },
+        ],
+      });
 
-    return response.choices[0]?.message?.content?.trim() ?? "";
+      const content = response.choices[0]?.message?.content?.trim() ?? "";
+      return content;
+    } catch (error) {
+      debugLog("completion failed", {
+        model: input.model,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
   }
+}
+
+function extractXmlTag(raw: string, tag: string): string | undefined {
+  const match = raw.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, "i"));
+  return match?.[1]?.trim();
 }
 
 export function parseObserverOutput(raw: string): ObserverResult {
   const normalized = raw.trim();
+
+  const observationsTag = extractXmlTag(normalized, "observations");
+  const currentTaskTag = extractXmlTag(normalized, "current-task");
+  const suggestedTag = extractXmlTag(normalized, "suggested-response");
+
+  if (observationsTag || currentTaskTag || suggestedTag) {
+    return {
+      observations: observationsTag ?? normalized,
+      currentTask: currentTaskTag,
+      suggestedResponse: suggestedTag,
+      raw: normalized,
+    };
+  }
 
   const currentTaskMatch = normalized.match(/(?:^|\n)Current task:\s*(.+)$/im);
   const suggestedMatch = normalized.match(/(?:^|\n)Suggested response:\s*(.+)$/im);
