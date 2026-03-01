@@ -10,11 +10,18 @@ import { ObservationAgents } from "./agents.js";
 import { loadConfig, sessionStatePath } from "./config.js";
 import { loadSessionState, saveSessionState } from "./state.js";
 import { countMessageTokens, countTokens } from "./tokens.js";
-import type { SessionMessage, SessionState } from "./types.js";
+import type { CursorMode, SessionMessage, SessionState } from "./types.js";
 
 type SessionMessagesResult = {
   data?: SessionMessage[];
   error?: unknown;
+};
+
+type CycleReason = "idle" | "messages.transform" | "compacting";
+
+type UnobservedWindow = {
+  messages: SessionMessage[];
+  mode: CursorMode;
 };
 
 const DEBUG_ENABLED = process.env.OM_DEBUG === "1";
@@ -39,7 +46,7 @@ export const ObservationalMemoryPlugin: Plugin = async ({ client, worktree }) =>
 
   const runObservationCycle = async (
     sessionId: string,
-    options?: { forceObserve?: boolean },
+    options?: { forceObserve?: boolean; excludeLatestMessage?: boolean; reason?: CycleReason },
   ): Promise<void> => {
     if (inflight.has(sessionId)) {
       await inflight.get(sessionId);
@@ -48,29 +55,65 @@ export const ObservationalMemoryPlugin: Plugin = async ({ client, worktree }) =>
 
     const task = (async () => {
       try {
+        const cycleReason = options?.reason ?? "idle";
         const state = await loadSessionState(config.storage.stateDir, sessionId);
         const allMessages = await fetchSessionMessages(sessionId);
-        const unobservedMessages = getUnobservedMessages(allMessages, state.lastObservedMessageId);
+        const unobservedWindow = getUnobservedMessages(
+          allMessages,
+          state.lastObservedMessageId,
+          state.lastObservedMessageAt,
+        );
+        const unobservedMessages = unobservedWindow.messages;
+        const cycleBaseState = {
+          lastCycleAt: Date.now(),
+          lastCycleReason: cycleReason,
+          lastCursorMode: unobservedWindow.mode,
+        };
+        const messagesToObserve = options?.excludeLatestMessage
+          ? unobservedMessages.slice(0, -1)
+          : unobservedMessages;
 
-        if (unobservedMessages.length === 0) {
+        if (messagesToObserve.length === 0) {
+          if (cycleReason !== "messages.transform") {
+            await saveSessionState(config.storage.stateDir, {
+              ...state,
+              ...cycleBaseState,
+              observeTriggered: false,
+              reflectTriggered: false,
+            });
+          }
           return;
         }
 
-        const unobservedTokens = countMessageTokens(unobservedMessages);
+        const unobservedTokens = countMessageTokens(messagesToObserve);
         const shouldObserve =
           options?.forceObserve || unobservedTokens >= config.observation.messageTokens;
 
         if (!shouldObserve) {
+          if (cycleReason !== "messages.transform") {
+            await saveSessionState(config.storage.stateDir, {
+              ...state,
+              ...cycleBaseState,
+              observeTriggered: false,
+              reflectTriggered: false,
+            });
+          }
           return;
         }
 
         const observed = await agents.observe({
           existingObservations: state.observations,
-          messages: unobservedMessages,
+          messages: messagesToObserve,
           customInstruction: config.observation.customInstruction,
         });
 
         if (!observed.observations.trim()) {
+          await saveSessionState(config.storage.stateDir, {
+            ...state,
+            ...cycleBaseState,
+            observeTriggered: true,
+            reflectTriggered: false,
+          });
           return;
         }
 
@@ -78,8 +121,10 @@ export const ObservationalMemoryPlugin: Plugin = async ({ client, worktree }) =>
         let observationTokens = countTokens(observations);
         let currentTask = observed.currentTask ?? state.currentTask;
         let suggestedResponse = observed.suggestedResponse ?? state.suggestedResponse;
+        let reflectTriggered = false;
 
         if (observationTokens >= config.reflection.observationTokens) {
+          reflectTriggered = true;
           const reflected = await agents.reflect({
             observations,
             customInstruction: config.reflection.customInstruction,
@@ -99,13 +144,18 @@ export const ObservationalMemoryPlugin: Plugin = async ({ client, worktree }) =>
           }
         }
 
+        const observedBoundary = messagesToObserve.at(-1);
         await saveSessionState(config.storage.stateDir, {
           ...state,
+          ...cycleBaseState,
           observations,
           observationTokens,
-          lastObservedMessageId: unobservedMessages.at(-1)?.info.id,
+          lastObservedMessageId: observedBoundary?.info.id ?? state.lastObservedMessageId,
+          lastObservedMessageAt: getMessageCreatedAt(observedBoundary) ?? state.lastObservedMessageAt,
           currentTask,
           suggestedResponse,
+          observeTriggered: true,
+          reflectTriggered,
         });
       } catch (error) {
         debugLog("observation cycle failed", {
@@ -150,7 +200,9 @@ export const ObservationalMemoryPlugin: Plugin = async ({ client, worktree }) =>
       }
 
       if (event.type === "session.idle") {
-        await runObservationCycle(event.properties.sessionID);
+        await runObservationCycle(event.properties.sessionID, {
+          reason: "idle",
+        });
       }
     },
 
@@ -161,7 +213,44 @@ export const ObservationalMemoryPlugin: Plugin = async ({ client, worktree }) =>
         return;
       }
 
-      await runObservationCycle(sessionId);
+      const allMessages = [...output.messages];
+
+      await runObservationCycle(sessionId, {
+        excludeLatestMessage: true,
+        reason: "messages.transform",
+      });
+
+      const state = await loadSessionState(config.storage.stateDir, sessionId);
+      const unobservedWindow = getUnobservedMessages(
+        allMessages,
+        state.lastObservedMessageId,
+        state.lastObservedMessageAt,
+      );
+
+      let boundedMessages = unobservedWindow.messages;
+      let cursorMode = unobservedWindow.mode;
+
+      if (boundedMessages.length === 0) {
+        const latestMessage = allMessages.at(-1);
+        if (latestMessage) {
+          boundedMessages = [latestMessage];
+          cursorMode = "fallback-latest";
+        }
+      }
+
+      output.messages.splice(0, output.messages.length, ...boundedMessages);
+
+      await saveSessionState(config.storage.stateDir, {
+        ...state,
+        lastCycleAt: Date.now(),
+        lastCycleReason: "messages.transform",
+        lastCursorMode: cursorMode,
+        tailMessagesBeforePrune: allMessages.length,
+        tailTokensBeforePrune: countMessageTokens(allMessages),
+        tailMessagesAfterPrune: boundedMessages.length,
+        tailTokensAfterPrune: countMessageTokens(boundedMessages),
+        prunedMessagesCount: Math.max(0, allMessages.length - boundedMessages.length),
+      });
     },
 
     "experimental.chat.system.transform": async (input, output) => {
@@ -177,11 +266,13 @@ export const ObservationalMemoryPlugin: Plugin = async ({ client, worktree }) =>
       }
 
       output.system.push(context);
+      output.system.push(buildContinuationReminder());
     },
 
     "experimental.session.compacting": async (input, output) => {
       await runObservationCycle(input.sessionID, {
         forceObserve: true,
+        reason: "compacting",
       });
 
       const state = await loadSessionState(config.storage.stateDir, input.sessionID);
@@ -190,7 +281,7 @@ export const ObservationalMemoryPlugin: Plugin = async ({ client, worktree }) =>
         output.context.push(context);
       }
 
-      output.context.push(OBSERVATION_CONTINUATION_HINT);
+      output.context.push(buildContinuationReminder());
     },
 
     tool: {
@@ -208,7 +299,11 @@ export const ObservationalMemoryPlugin: Plugin = async ({ client, worktree }) =>
           const statePath = sessionStatePath(config.storage.stateDir, sessionId);
           const state = await loadSessionState(config.storage.stateDir, sessionId);
           const messages = await fetchSessionMessages(sessionId);
-          const unobserved = getUnobservedMessages(messages, state.lastObservedMessageId);
+          const unobservedWindow = getUnobservedMessages(
+            messages,
+            state.lastObservedMessageId,
+            state.lastObservedMessageAt,
+          );
 
           return JSON.stringify(
             {
@@ -221,8 +316,26 @@ export const ObservationalMemoryPlugin: Plugin = async ({ client, worktree }) =>
               reflectionThreshold: config.reflection.observationTokens,
               observationsPresent: Boolean(state.observations.trim()),
               lastObservedMessageId: state.lastObservedMessageId ?? null,
-              unobservedMessages: unobserved.length,
-              unobservedMessageTokens: countMessageTokens(unobserved),
+              lastObservedMessageAt:
+                typeof state.lastObservedMessageAt === "number"
+                  ? new Date(state.lastObservedMessageAt).toISOString()
+                  : null,
+              cursorModeForCurrentWindow: unobservedWindow.mode,
+              unobservedMessages: unobservedWindow.messages.length,
+              unobservedMessageTokens: countMessageTokens(unobservedWindow.messages),
+              lastCycleAt:
+                typeof state.lastCycleAt === "number"
+                  ? new Date(state.lastCycleAt).toISOString()
+                  : null,
+              lastCycleReason: state.lastCycleReason ?? null,
+              lastCursorMode: state.lastCursorMode ?? null,
+              observeTriggered: state.observeTriggered ?? null,
+              reflectTriggered: state.reflectTriggered ?? null,
+              tailMessagesBeforePrune: state.tailMessagesBeforePrune ?? null,
+              tailTokensBeforePrune: state.tailTokensBeforePrune ?? null,
+              tailMessagesAfterPrune: state.tailMessagesAfterPrune ?? null,
+              tailTokensAfterPrune: state.tailTokensAfterPrune ?? null,
+              prunedMessagesCount: state.prunedMessagesCount ?? null,
               currentTask: state.currentTask ?? null,
               suggestedResponse: state.suggestedResponse ?? null,
               updatedAt: new Date(state.updatedAt).toISOString(),
@@ -310,35 +423,120 @@ function buildObservationContext(state: SessionState): string | undefined {
   return sections.join("\n");
 }
 
+function buildContinuationReminder(): string {
+  return `<system-reminder>${OBSERVATION_CONTINUATION_HINT}</system-reminder>`;
+}
+
 function appendObservations(existing: string, incoming: string): string {
-  const next = incoming.trim();
+  const current = normalizeObservations(existing);
+  const next = normalizeObservations(incoming);
+
   if (!next) {
-    return existing;
+    return current;
   }
 
-  const current = existing.trim();
   if (!current) {
     return next;
+  }
+
+  if (current === next) {
+    return current;
+  }
+
+  if (next.includes(current)) {
+    return next;
+  }
+
+  if (current.includes(next)) {
+    return current;
   }
 
   return `${current}\n\n${next}`;
 }
 
+function normalizeObservations(value: string): string {
+  return value.replace(/\r\n/g, "\n").trim();
+}
+
 function getUnobservedMessages(
   messages: SessionMessage[],
   lastObservedMessageId?: string,
-): SessionMessage[] {
-  if (!lastObservedMessageId) {
-    return messages;
+  lastObservedMessageAt?: number,
+): UnobservedWindow {
+  if (!lastObservedMessageId && typeof lastObservedMessageAt !== "number") {
+    return {
+      messages,
+      mode: "none",
+    };
   }
 
-  const index = messages.findIndex((message) => message.info.id === lastObservedMessageId);
-
-  if (index < 0) {
-    return messages;
+  if (lastObservedMessageId) {
+    const index = messages.findIndex((message) => message.info.id === lastObservedMessageId);
+    if (index >= 0) {
+      return {
+        messages: messages.slice(index + 1),
+        mode: "id",
+      };
+    }
   }
 
-  return messages.slice(index + 1);
+  if (typeof lastObservedMessageAt === "number" && Number.isFinite(lastObservedMessageAt)) {
+    const timestampIndex = messages.findIndex((message) => {
+      const createdAt = getMessageCreatedAt(message);
+      return typeof createdAt === "number" && createdAt > lastObservedMessageAt;
+    });
+
+    if (timestampIndex >= 0) {
+      return {
+        messages: messages.slice(timestampIndex),
+        mode: "timestamp",
+      };
+    }
+
+    const newestCreatedAt = messages.reduce<number | undefined>((latest, message) => {
+      const createdAt = getMessageCreatedAt(message);
+      if (typeof createdAt !== "number") {
+        return latest;
+      }
+      if (typeof latest !== "number") {
+        return createdAt;
+      }
+      return createdAt > latest ? createdAt : latest;
+    }, undefined);
+
+    if (typeof newestCreatedAt === "number" && newestCreatedAt <= lastObservedMessageAt) {
+      return {
+        messages: [],
+        mode: "timestamp",
+      };
+    }
+  }
+
+  const latestMessage = messages.at(-1);
+  return {
+    messages: latestMessage ? [latestMessage] : [],
+    mode: "fallback-latest",
+  };
+}
+
+function getMessageCreatedAt(message?: SessionMessage): number | undefined {
+  if (!message) {
+    return undefined;
+  }
+
+  const createdAt = message.info.time.created;
+  if (typeof createdAt === "number" && Number.isFinite(createdAt)) {
+    return createdAt;
+  }
+
+  if (typeof createdAt === "string") {
+    const parsed = Date.parse(createdAt);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return undefined;
 }
 
 function getSessionIdFromMessages(messages: SessionMessage[]): string | undefined {

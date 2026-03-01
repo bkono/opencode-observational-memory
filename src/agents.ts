@@ -48,16 +48,43 @@ export class ObservationAgents {
     const systemPrompt = buildObserverSystemPrompt(
       input.customInstruction ?? this.config.observation.customInstruction,
     );
-    const userPrompt = [
-      "Current observations:",
-      input.existingObservations.trim() || "(none)",
+
+    const previousObservations = input.existingObservations.trim();
+    const userPromptSections: string[] = [];
+
+    if (previousObservations) {
+      userPromptSections.push(
+        "## Previous Observations",
+        "",
+        previousObservations,
+        "",
+        "---",
+        "",
+        "Do not repeat these existing observations. Your new observations will be appended to the existing observations.",
+        "",
+      );
+    }
+
+    userPromptSections.push(
+      "## New Message History to Observe",
       "",
-      "New messages:",
       conversation,
-      input.includeContinuationHint ? `\n${OBSERVATION_CONTINUATION_HINT}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
+      "",
+      "---",
+      "",
+      "## Your Task",
+      "",
+      "Extract new observations from the message history above. Do not repeat observations that are already in the previous observations. Add your new observations in the format specified in your instructions.",
+    );
+
+    if (input.includeContinuationHint) {
+      userPromptSections.push(
+        "",
+        `<system-reminder>${OBSERVATION_CONTINUATION_HINT}</system-reminder>`,
+      );
+    }
+
+    const userPrompt = userPromptSections.join("\n");
 
     const raw = await this.complete({
       model: this.config.observation.model,

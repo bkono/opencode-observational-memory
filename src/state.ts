@@ -51,11 +51,54 @@ export async function loadSessionState(
         typeof parsed.lastObservedMessageId === "string"
           ? parsed.lastObservedMessageId
           : undefined,
+      lastObservedMessageAt:
+        typeof parsed.lastObservedMessageAt === "number" && Number.isFinite(parsed.lastObservedMessageAt)
+          ? parsed.lastObservedMessageAt
+          : undefined,
       currentTask:
         typeof parsed.currentTask === "string" ? parsed.currentTask : undefined,
       suggestedResponse:
         typeof parsed.suggestedResponse === "string"
           ? parsed.suggestedResponse
+          : undefined,
+      lastCycleAt:
+        typeof parsed.lastCycleAt === "number" && Number.isFinite(parsed.lastCycleAt)
+          ? parsed.lastCycleAt
+          : undefined,
+      lastCycleReason:
+        typeof parsed.lastCycleReason === "string" ? parsed.lastCycleReason : undefined,
+      lastCursorMode:
+        parsed.lastCursorMode === "none" ||
+        parsed.lastCursorMode === "id" ||
+        parsed.lastCursorMode === "timestamp" ||
+        parsed.lastCursorMode === "fallback-latest"
+          ? parsed.lastCursorMode
+          : undefined,
+      tailMessagesBeforePrune:
+        typeof parsed.tailMessagesBeforePrune === "number" &&
+        Number.isFinite(parsed.tailMessagesBeforePrune)
+          ? parsed.tailMessagesBeforePrune
+          : undefined,
+      tailTokensBeforePrune:
+        typeof parsed.tailTokensBeforePrune === "number" && Number.isFinite(parsed.tailTokensBeforePrune)
+          ? parsed.tailTokensBeforePrune
+          : undefined,
+      tailMessagesAfterPrune:
+        typeof parsed.tailMessagesAfterPrune === "number" &&
+        Number.isFinite(parsed.tailMessagesAfterPrune)
+          ? parsed.tailMessagesAfterPrune
+          : undefined,
+      tailTokensAfterPrune:
+        typeof parsed.tailTokensAfterPrune === "number" && Number.isFinite(parsed.tailTokensAfterPrune)
+          ? parsed.tailTokensAfterPrune
+          : undefined,
+      observeTriggered:
+        typeof parsed.observeTriggered === "boolean" ? parsed.observeTriggered : undefined,
+      reflectTriggered:
+        typeof parsed.reflectTriggered === "boolean" ? parsed.reflectTriggered : undefined,
+      prunedMessagesCount:
+        typeof parsed.prunedMessagesCount === "number" && Number.isFinite(parsed.prunedMessagesCount)
+          ? parsed.prunedMessagesCount
           : undefined,
       updatedAt:
         typeof parsed.updatedAt === "number" && Number.isFinite(parsed.updatedAt)

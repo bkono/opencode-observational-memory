@@ -20,13 +20,26 @@ export interface OMConfig {
   };
 }
 
+export type CursorMode = "none" | "id" | "timestamp" | "fallback-latest";
+
 export interface SessionState {
   sessionId: string;
   observations: string;
   observationTokens: number;
   lastObservedMessageId?: string;
+  lastObservedMessageAt?: number;
   currentTask?: string;
   suggestedResponse?: string;
+  lastCycleAt?: number;
+  lastCycleReason?: string;
+  lastCursorMode?: CursorMode;
+  tailMessagesBeforePrune?: number;
+  tailTokensBeforePrune?: number;
+  tailMessagesAfterPrune?: number;
+  tailTokensAfterPrune?: number;
+  observeTriggered?: boolean;
+  reflectTriggered?: boolean;
+  prunedMessagesCount?: number;
   updatedAt: number;
 }
 
