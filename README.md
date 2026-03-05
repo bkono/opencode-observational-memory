@@ -1,88 +1,192 @@
 # OpenCode Observational Memory Plugin
 
-Mastra-style observational memory for OpenCode sessions.
+OpenCode plugin implementing [Mastra-inspired observational memory](https://mastra.ai/docs/memory/observational-memory). Who doesn't love limitless context windows?
 
-## What it does
+Observational memory compresses raw conversation history into dense observations using an observer/reflector pattern, so your agent maintains continuity across compaction boundaries and long-running sessions with zero vector DBs or knowledge graphs required.
 
-- Tracks unobserved session messages.
-- Runs an **observer** model pass when unobserved message tokens cross threshold (default: `30_000`).
-- Persists observations per session under `.opencode/om-state`.
-- Runs a **reflector** compaction pass when observation-log tokens cross threshold (default: `40_000`).
-- Injects stored memory into chat system context via OpenCode hooks.
+## Quick Start
 
-## Defaults
+### Install
 
-- Observation threshold: `30_000` message tokens
-- Reflection threshold: `40_000` observation tokens
-- Observation model: `google/gemini-2.5-flash`
-- Reflection model: `google/gemini-2.5-flash`
-- Tokenizer: `js-tiktoken` `o200k_base`
+```bash
+npm install @solvedbydev/opencode-observational-memory
+```
+
+### Add to OpenCode
+
+In your project's `opencode.json`:
+
+```json
+{
+  "plugin": ["@solvedbydev/opencode-observational-memory"]
+}
+```
+
+### Set an API Key
+
+The plugin calls an OpenAI-compatible LLM to extract and consolidate observations. Provide a key via environment variable:
+
+```bash
+export OM_API_KEY="your-api-key"
+# or fall back to:
+export OPENAI_API_KEY="your-api-key"
+```
+
+That's it. The plugin runs automatically with no code changes required.
+
+## How It Works
+
+The plugin hooks into OpenCode's event and chat lifecycle to maintain a persistent memory layer:
+
+1. **Observe** - When unobserved message tokens exceed a threshold (default: 30k), an observer agent extracts key facts, decisions, and context from new messages.
+2. **Reflect** - When accumulated observation tokens exceed a second threshold (default: 40k), a reflector agent consolidates and compresses observations, removing redundancy while preserving meaning.
+3. **Inject** - Observations are injected into the system prompt and message context on every turn, giving the LLM continuity even after compaction discards raw history.
+
+```
+session.idle / messages.transform
+  |
+  +-- unobserved tokens >= threshold?
+  |     yes -> Observer extracts observations
+  |             |
+  |             +-- observation tokens >= threshold?
+  |                   yes -> Reflector consolidates
+  |
+  +-- observations injected into system prompt & messages
+```
+
+### Observer / Reflector Pattern
+
+Two specialized LLM agents coordinate memory:
+
+- **Observer**: Reads new message history plus existing observations. Extracts discrete facts, decisions, preferences, and working context. Also tracks `currentTask` and `suggestedResponse` for session continuity.
+- **Reflector**: Takes the full observation log when it grows too large. Compresses it by removing duplication, merging related items, and prioritizing recent/actionable information.
+
+Both agents use configurable models (default: `google/gemini-2.5-flash`) and support custom instructions for domain-specific extraction.
 
 ## Configuration
 
-The plugin reads config from:
+Configuration merges from multiple sources (highest precedence first):
 
-1. Global: `~/.config/opencode/om-config.json`
-2. Project: `<worktree>/.opencode/om-config.json`
+1. **Environment variables** - `OM_API_KEY`, `OPENAI_API_KEY`, `OM_API_BASE_URL`
+2. **Project config** - `<worktree>/.opencode/om-config.json`
+3. **Global config** - `~/.config/opencode/om-config.json`
+4. **Built-in defaults**
 
-Project config overrides global config.
-
-### Config shape
+### Example Config
 
 ```json
 {
   "observation": {
     "messageTokens": 30000,
     "model": "google/gemini-2.5-flash",
-    "customInstruction": "optional"
+    "customInstruction": "Focus on architectural decisions and rejected alternatives."
   },
   "reflection": {
     "observationTokens": 40000,
     "model": "google/gemini-2.5-flash",
-    "customInstruction": "optional"
+    "customInstruction": ""
   },
   "api": {
-    "baseURL": "optional",
-    "apiKey": "optional"
+    "baseURL": "https://openrouter.ai/api/v1",
+    "apiKey": "sk-..."
   },
   "storage": {
-    "stateDir": "optional"
+    "stateDir": ".opencode/om-state"
   }
 }
 ```
 
-## API key resolution
+### Config Reference
 
-Priority order:
+| Key                             | Default                         | Description                                             |
+| ------------------------------- | ------------------------------- | ------------------------------------------------------- |
+| `observation.messageTokens`     | `30000`                         | Token threshold to trigger observation                  |
+| `observation.model`             | `google/gemini-2.5-flash`       | Model for the observer agent                            |
+| `observation.customInstruction` | --                              | Additional instruction injected into observer prompt    |
+| `reflection.observationTokens`  | `40000`                         | Token threshold to trigger reflection                   |
+| `reflection.model`              | `google/gemini-2.5-flash`       | Model for the reflector agent                           |
+| `reflection.customInstruction`  | --                              | Additional instruction injected into reflector prompt   |
+| `api.baseURL`                   | --                              | OpenAI-compatible base URL (env: `OM_API_BASE_URL`)     |
+| `api.apiKey`                    | --                              | API key (env: `OM_API_KEY` > `OPENAI_API_KEY` > config) |
+| `storage.stateDir`              | `<worktree>/.opencode/om-state` | Directory for session state JSON files                  |
 
-1. `api.apiKey` in config
-2. `OM_API_KEY`
-3. `OPENAI_API_KEY`
+### Debug Mode
 
-Optional base URL:
+Set `OM_DEBUG=1` to enable verbose logging to stderr for observation cycles, token counts, and state persistence.
 
-1. `api.baseURL` in config
-2. `OM_API_BASE_URL`
+## Tools
 
-## OpenCode hooks used
+The plugin registers two tools available to the LLM during sessions:
 
-- `event` (`session.created`, `session.idle`)
-- `experimental.chat.messages.transform`
-- `experimental.chat.system.transform`
-- `experimental.session.compacting`
+### `om_status`
 
-## Diagnostic tools
+Returns current session memory metrics: observation token counts, thresholds, cursor mode, unobserved message count, cycle history, current task, and suggested response.
 
-- `om_status`
-  - Returns session memory status, thresholds, unobserved counts/tokens, and task hints.
-- `om_observations`
-  - Returns stored observation blocks for the session.
+### `om_observations`
 
-Both tools accept optional `session_id`.
+Returns the stored observation block for the session, including `<observations>`, `<current-task>`, and `<suggested-response>` sections.
 
-## Build and verify
+## Why Observational Memory?
+
+Even models with large context windows degrade as the window fills. More raw history means more noise, worse adherence to instructions, and wasted tokens on content the agent no longer needs. Mastra calls these **context rot** and **context waste** and [their observational memory system](https://mastra.ai/docs/memory/observational-memory) addresses both.
+
+The idea mirrors how human memory works: you don't remember every word of every conversation. You observe what happened, then your brain reflects by reorganizing, combining, and condensing into long-term memory. OM works the same way, compressing raw context into dense observations (typically 5-40x compression) that keep the agent on task over arbitrarily long sessions.
+
+The result is a context window with three tiers:
+
+1. **Recent messages** - exact conversation history for the current task
+2. **Observations** - a dense log of what the observer has extracted
+3. **Reflections** - condensed observations when the log itself grows too large
+
+For deeper background, see [Mastra's observational memory docs](https://mastra.ai/docs/memory/observational-memory) and their [announcement post](https://mastra.ai/blog/observational-memory) covering the design rationale and LongMemEval benchmark results.
+
+This plugin adapts the pattern for OpenCode's plugin hook system:
+
+- Runs as an OpenCode plugin (event hooks + chat transforms) rather than framework middleware
+- Text-based append-log with token-aware compaction, no vector DB or external storage needed
+- Tracks `currentTask` and `suggestedResponse` for richer session continuity across compaction
+- Supports independent custom instructions for observer and reflector agents
+
+## Plugin Lifecycle
+
+The plugin registers handlers at these OpenCode extension points:
+
+| Hook                                   | Trigger              | Action                                                               |
+| -------------------------------------- | -------------------- | -------------------------------------------------------------------- |
+| `session.created`                      | New session          | Initialize/load session state from disk                              |
+| `session.idle`                         | No active processing | Run observation cycle if thresholds met                              |
+| `experimental.chat.messages.transform` | Before LLM call      | Prune messages to unobserved window; run observation cycle           |
+| `experimental.chat.system.transform`   | Before LLM call      | Inject observations + continuation reminder into system prompt       |
+| `experimental.session.compacting`      | Context compaction   | Force observation cycle; inject observations into compaction context |
+
+## Building from Source
 
 ```bash
-npm run typecheck
-npm run build
+npm install
+npm run build       # tsc -> dist/
+npm run typecheck   # type-check without emitting
+npm run clean       # rm -rf dist
 ```
+
+### Source Layout
+
+```
+src/
+  index.ts     Plugin entry point, event/hook handlers, tools
+  agents.ts    Observer and reflector LLM agent logic
+  config.ts    Configuration loading and merging
+  prompts.ts   Prompt templates for observer/reflector
+  state.ts     Session state persistence (JSON files)
+  tokens.ts    Token counting (js-tiktoken, o200k_base)
+  types.ts     TypeScript interfaces
+```
+
+### Dependencies
+
+**Runtime**: `js-tiktoken` (token counting), `openai` (OpenAI-compatible API client)
+
+**Dev**: `@opencode-ai/plugin`, `@opencode-ai/sdk`, `typescript`
+
+## License
+
+MIT
