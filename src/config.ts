@@ -51,16 +51,24 @@ export async function loadConfig(worktree: string): Promise<OMConfig> {
   return {
     observation: {
       messageTokens:
+        envPositiveInteger("OM_OBSERVATION_MESSAGE_TOKENS") ??
         asPositiveInteger(merged.observation?.messageTokens) ??
         DEFAULTS.observation.messageTokens,
-      model: asString(merged.observation?.model) ?? DEFAULTS.observation.model,
+      model:
+        envString("OM_OBSERVATION_MODEL") ??
+        asString(merged.observation?.model) ??
+        DEFAULTS.observation.model,
       customInstruction: asString(merged.observation?.customInstruction),
     },
     reflection: {
       observationTokens:
+        envPositiveInteger("OM_REFLECTION_OBSERVATION_TOKENS") ??
         asPositiveInteger(merged.reflection?.observationTokens) ??
         DEFAULTS.reflection.observationTokens,
-      model: asString(merged.reflection?.model) ?? DEFAULTS.reflection.model,
+      model:
+        envString("OM_REFLECTION_MODEL") ??
+        asString(merged.reflection?.model) ??
+        DEFAULTS.reflection.model,
       customInstruction: asString(merged.reflection?.customInstruction),
     },
     api: {
@@ -109,6 +117,20 @@ function mergeConfig(base: PartialConfig, override: PartialConfig): PartialConfi
       ...override.storage,
     },
   };
+}
+
+function envString(name: string): string | undefined {
+  const value = process.env[name];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function envPositiveInteger(name: string): number | undefined {
+  const raw = process.env[name];
+  if (typeof raw !== "string" || raw.length === 0) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function asString(value: unknown): string | undefined {

@@ -67,7 +67,7 @@ Both agents use configurable models (default: `google/gemini-2.5-flash`) and sup
 
 Configuration merges from multiple sources (highest precedence first):
 
-1. **Environment variables** - `OM_API_KEY`, `OPENAI_API_KEY`, `OM_API_BASE_URL`
+1. **Environment variables** -- `OM_API_KEY`, `OM_OBSERVATION_MODEL`, `OM_OBSERVATION_MESSAGE_TOKENS`, `OM_REFLECTION_MODEL`, `OM_REFLECTION_OBSERVATION_TOKENS`, `OM_API_BASE_URL`
 2. **Project config** - `<worktree>/.opencode/om-config.json`
 3. **Global config** - `~/.config/opencode/om-config.json`
 4. **Built-in defaults**
@@ -98,17 +98,17 @@ Configuration merges from multiple sources (highest precedence first):
 
 ### Config Reference
 
-| Key                             | Default                         | Description                                             |
-| ------------------------------- | ------------------------------- | ------------------------------------------------------- |
-| `observation.messageTokens`     | `30000`                         | Token threshold to trigger observation                  |
-| `observation.model`             | `google/gemini-2.5-flash`       | Model for the observer agent                            |
-| `observation.customInstruction` | --                              | Additional instruction injected into observer prompt    |
-| `reflection.observationTokens`  | `40000`                         | Token threshold to trigger reflection                   |
-| `reflection.model`              | `google/gemini-2.5-flash`       | Model for the reflector agent                           |
-| `reflection.customInstruction`  | --                              | Additional instruction injected into reflector prompt   |
-| `api.baseURL`                   | --                              | OpenAI-compatible base URL (env: `OM_API_BASE_URL`)     |
-| `api.apiKey`                    | --                              | API key (env: `OM_API_KEY` > `OPENAI_API_KEY` > config) |
-| `storage.stateDir`              | `<worktree>/.opencode/om-state` | Directory for session state JSON files                  |
+| Key | Default | Env Override | Description |
+|-----|---------|-------------|-------------|
+| `observation.messageTokens` | `30000` | `OM_OBSERVATION_MESSAGE_TOKENS` | Token threshold to trigger observation |
+| `observation.model` | `google/gemini-2.5-flash` | `OM_OBSERVATION_MODEL` | Model for the observer agent |
+| `observation.customInstruction` | -- | -- | Additional instruction injected into observer prompt |
+| `reflection.observationTokens` | `40000` | `OM_REFLECTION_OBSERVATION_TOKENS` | Token threshold to trigger reflection |
+| `reflection.model` | `google/gemini-2.5-flash` | `OM_REFLECTION_MODEL` | Model for the reflector agent |
+| `reflection.customInstruction` | -- | -- | Additional instruction injected into reflector prompt |
+| `api.baseURL` | -- | `OM_API_BASE_URL` | OpenAI-compatible base URL |
+| `api.apiKey` | -- | `OM_API_KEY` > `OPENAI_API_KEY` | API key for LLM calls |
+| `storage.stateDir` | `<worktree>/.opencode/om-state` | -- | Directory for session state JSON files |
 
 ### Debug Mode
 

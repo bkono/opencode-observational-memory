@@ -313,7 +313,9 @@ export const ObservationalMemoryPlugin: Plugin = async ({ client, worktree }) =>
               stateFileExists: existsSync(statePath),
               observationTokens: state.observationTokens,
               observationThreshold: config.observation.messageTokens,
+              observationModel: config.observation.model,
               reflectionThreshold: config.reflection.observationTokens,
+              reflectionModel: config.reflection.model,
               observationsPresent: Boolean(state.observations.trim()),
               lastObservedMessageId: state.lastObservedMessageId ?? null,
               lastObservedMessageAt:
