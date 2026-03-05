@@ -14,7 +14,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/bkono/opencode-observational-memory"
+    "url": "git+https://github.com/bkono/opencode-observational-memory.git"
   },
   "bugs": {
     "url": "https://github.com/bkono/opencode-observational-memory/issues"
