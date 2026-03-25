@@ -100,10 +100,10 @@ Configuration merges from multiple sources (highest precedence first):
 
 | Key | Default | Env Override | Description |
 |-----|---------|-------------|-------------|
-| `observation.messageTokens` | `30000` | `OM_OBSERVATION_MESSAGE_TOKENS` | Token threshold to trigger observation |
+| `observation.messageTokens` | `70000` | `OM_OBSERVATION_MESSAGE_TOKENS` | Token threshold to trigger observation |
 | `observation.model` | `google/gemini-2.5-flash` | `OM_OBSERVATION_MODEL` | Model for the observer agent |
 | `observation.customInstruction` | -- | -- | Additional instruction injected into observer prompt |
-| `reflection.observationTokens` | `40000` | `OM_REFLECTION_OBSERVATION_TOKENS` | Token threshold to trigger reflection |
+| `reflection.observationTokens` | `50000` | `OM_REFLECTION_OBSERVATION_TOKENS` | Token threshold to trigger reflection |
 | `reflection.model` | `google/gemini-2.5-flash` | `OM_REFLECTION_MODEL` | Model for the reflector agent |
 | `reflection.customInstruction` | -- | -- | Additional instruction injected into reflector prompt |
 | `api.baseURL` | -- | `OM_API_BASE_URL` | OpenAI-compatible base URL |

@@ -6,11 +6,11 @@ import type { OMConfig } from "./types.js";
 
 const DEFAULTS = {
   observation: {
-    messageTokens: 30_000,
+    messageTokens: 70_000,
     model: "google/gemini-2.5-flash",
   },
   reflection: {
-    observationTokens: 40_000,
+    observationTokens: 50_000,
     model: "google/gemini-2.5-flash",
   },
 } as const;
