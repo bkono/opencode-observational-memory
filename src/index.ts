@@ -1,4 +1,7 @@
 import { existsSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Plugin } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin/tool";
 import {
@@ -349,7 +352,7 @@ export const ObservationalMemoryPlugin: Plugin = async ({ client, worktree }) =>
       }),
 
       om_observations: tool({
-        description: "Return the stored observational memory block for a session.",
+        description: "Write the stored observational memory block for a session to a temp file and return the path.",
         args: {
           session_id: tool.schema
             .string()
@@ -385,7 +388,10 @@ export const ObservationalMemoryPlugin: Plugin = async ({ client, worktree }) =>
             );
           }
 
-          return sections.join("\n");
+          const contents = sections.join("\n");
+          const filePath = await writeObservationDump(sessionId, contents);
+
+          return `Observation dump written to ${filePath}`;
         },
       }),
     },
@@ -544,4 +550,18 @@ function getMessageCreatedAt(message?: SessionMessage): number | undefined {
 function getSessionIdFromMessages(messages: SessionMessage[]): string | undefined {
   const latest = messages.at(-1);
   return latest?.info.sessionID;
+}
+
+async function writeObservationDump(sessionId: string, contents: string): Promise<string> {
+  const directory = join(tmpdir(), "opencode-om-observations");
+  await mkdir(directory, { recursive: true });
+
+  const filePath = join(directory, `${sanitizeFileComponent(sessionId)}.txt`);
+  await writeFile(filePath, contents, "utf8");
+  return filePath;
+}
+
+function sanitizeFileComponent(value: string): string {
+  const sanitized = value.replace(/[^a-zA-Z0-9._-]/g, "-");
+  return sanitized || "session";
 }

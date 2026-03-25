@@ -124,7 +124,7 @@ Returns current session memory metrics: observation token counts, thresholds, cu
 
 ### `om_observations`
 
-Returns the stored observation block for the session, including `<observations>`, `<current-task>`, and `<suggested-response>` sections.
+Writes the stored observation block for the session to a temp file and returns the path. The dump includes `<observations>`, `<current-task>`, and `<suggested-response>` sections.
 
 ## Why Observational Memory?
 
