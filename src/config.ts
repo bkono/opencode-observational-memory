@@ -95,7 +95,10 @@ async function readConfigFile(path: string): Promise<PartialConfig> {
     const raw = await readFile(path, "utf8");
     const parsed = JSON.parse(raw) as unknown;
     return (typeof parsed === "object" && parsed ? parsed : {}) as PartialConfig;
-  } catch {
+  } catch (error) {
+    console.error(
+      `[om] failed to parse config file ${path}: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return {};
   }
 }
