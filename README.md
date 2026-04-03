@@ -34,6 +34,25 @@ export OPENAI_API_KEY="your-api-key"
 
 That's it. The plugin runs automatically with no code changes required.
 
+### Limit to Specific Agents
+
+By default, observational memory applies to all agents. To restrict it to specific agents by name:
+
+```json
+// .opencode/om-config.json
+{
+  "agents": ["sketch", "plan", "coordinate"]
+}
+```
+
+Or via environment variable:
+
+```bash
+export OM_AGENTS="sketch,plan,coordinate"
+```
+
+Non-listed agents (workers, reviewers, etc.) run with zero OM overhead — no observer LLM calls, no system prompt injection, no message pruning.
+
 ## How It Works
 
 The plugin hooks into OpenCode's event and chat lifecycle to maintain a persistent memory layer:
@@ -67,7 +86,7 @@ Both agents use configurable models (default: `google/gemini-2.5-flash`) and sup
 
 Configuration merges from multiple sources (highest precedence first):
 
-1. **Environment variables** -- `OM_API_KEY`, `OM_OBSERVATION_MODEL`, `OM_OBSERVATION_MESSAGE_TOKENS`, `OM_REFLECTION_MODEL`, `OM_REFLECTION_OBSERVATION_TOKENS`, `OM_API_BASE_URL`
+1. **Environment variables** -- `OM_AGENTS`, `OM_API_KEY`, `OM_OBSERVATION_MODEL`, `OM_OBSERVATION_MESSAGE_TOKENS`, `OM_REFLECTION_MODEL`, `OM_REFLECTION_OBSERVATION_TOKENS`, `OM_API_BASE_URL`
 2. **Project config** - `<worktree>/.opencode/om-config.json`
 3. **Global config** - `~/.config/opencode/om-config.json`
 4. **Built-in defaults**
@@ -76,6 +95,7 @@ Configuration merges from multiple sources (highest precedence first):
 
 ```json
 {
+  "agents": ["sketch", "plan", "coordinate"],
   "observation": {
     "messageTokens": 30000,
     "model": "google/gemini-2.5-flash",
@@ -100,6 +120,7 @@ Configuration merges from multiple sources (highest precedence first):
 
 | Key | Default | Env Override | Description |
 |-----|---------|-------------|-------------|
+| `agents` | `"all"` | `OM_AGENTS` | Agent names to apply OM to, or `"all"`. Env accepts comma-separated names. |
 | `observation.messageTokens` | `70000` | `OM_OBSERVATION_MESSAGE_TOKENS` | Token threshold to trigger observation |
 | `observation.model` | `google/gemini-2.5-flash` | `OM_OBSERVATION_MODEL` | Model for the observer agent |
 | `observation.customInstruction` | -- | -- | Additional instruction injected into observer prompt |
@@ -154,7 +175,8 @@ The plugin registers handlers at these OpenCode extension points:
 | Hook                                   | Trigger              | Action                                                               |
 | -------------------------------------- | -------------------- | -------------------------------------------------------------------- |
 | `session.created`                      | New session          | Initialize/load session state from disk                              |
-| `session.idle`                         | No active processing | Run observation cycle if thresholds met                              |
+| `chat.message`                         | Message received     | Track current agent name per session for agent filtering             |
+| `session.idle`                         | No active processing | Run observation cycle if thresholds met (enabled agents only)        |
 | `experimental.chat.messages.transform` | Before LLM call      | Prune messages to unobserved window; run observation cycle           |
 | `experimental.chat.system.transform`   | Before LLM call      | Inject observations + continuation reminder into system prompt       |
 | `experimental.session.compacting`      | Context compaction   | Force observation cycle; inject observations into compaction context |
