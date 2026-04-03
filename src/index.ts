@@ -46,6 +46,13 @@ export const ObservationalMemoryPlugin: Plugin = async ({ client, worktree }) =>
   const config = await loadConfig(worktree);
   const agents = new ObservationAgents(config);
   const inflight = new Map<string, Promise<void>>();
+  const agentForSession = new Map<string, string>();
+
+  const isAgentEnabled = (agentName: string | undefined): boolean => {
+    if (config.agents === "all") return true;
+    if (!agentName) return false;
+    return config.agents.includes(agentName);
+  };
 
   const runObservationCycle = async (
     sessionId: string,
@@ -203,9 +210,26 @@ export const ObservationalMemoryPlugin: Plugin = async ({ client, worktree }) =>
       }
 
       if (event.type === "session.idle") {
-        await runObservationCycle(event.properties.sessionID, {
+        const idleSessionId = event.properties.sessionID;
+        if (!isAgentEnabled(agentForSession.get(idleSessionId))) {
+          debugLog("session.idle skipped for agent", {
+            sessionId: idleSessionId,
+            agent: agentForSession.get(idleSessionId),
+          });
+          return;
+        }
+        await runObservationCycle(idleSessionId, {
           reason: "idle",
         });
+      }
+    },
+
+    "chat.message": async (input, output) => {
+      const sessionId = input.sessionID;
+      const agent = input.agent ?? output.message.agent;
+      if (sessionId && agent) {
+        agentForSession.set(sessionId, agent);
+        debugLog("agent tracked for session", { sessionId, agent });
       }
     },
 
@@ -213,6 +237,12 @@ export const ObservationalMemoryPlugin: Plugin = async ({ client, worktree }) =>
       const sessionId = getSessionIdFromMessages(output.messages);
 
       if (!sessionId) {
+        return;
+      }
+
+      const currentAgent = agentForSession.get(sessionId) ?? getAgentFromMessages(output.messages);
+      if (!isAgentEnabled(currentAgent)) {
+        debugLog("messages.transform skipped for agent", { sessionId, agent: currentAgent });
         return;
       }
 
@@ -262,6 +292,12 @@ export const ObservationalMemoryPlugin: Plugin = async ({ client, worktree }) =>
         return;
       }
 
+      const currentAgent = agentForSession.get(sessionId);
+      if (!isAgentEnabled(currentAgent)) {
+        debugLog("system.transform skipped for agent", { sessionId, agent: currentAgent });
+        return;
+      }
+
       const state = await loadSessionState(config.storage.stateDir, sessionId);
       const context = buildObservationContext(state);
       if (!context) {
@@ -273,6 +309,14 @@ export const ObservationalMemoryPlugin: Plugin = async ({ client, worktree }) =>
     },
 
     "experimental.session.compacting": async (input, output) => {
+      if (!isAgentEnabled(agentForSession.get(input.sessionID))) {
+        debugLog("compacting skipped for agent", {
+          sessionId: input.sessionID,
+          agent: agentForSession.get(input.sessionID),
+        });
+        return;
+      }
+
       await runObservationCycle(input.sessionID, {
         forceObserve: true,
         reason: "compacting",
@@ -550,6 +594,16 @@ function getMessageCreatedAt(message?: SessionMessage): number | undefined {
 function getSessionIdFromMessages(messages: SessionMessage[]): string | undefined {
   const latest = messages.at(-1);
   return latest?.info.sessionID;
+}
+
+function getAgentFromMessages(messages: SessionMessage[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const info = messages[i].info;
+    if (info.role === "user" && "agent" in info) {
+      return (info as { agent: string }).agent;
+    }
+  }
+  return undefined;
 }
 
 async function writeObservationDump(sessionId: string, contents: string): Promise<string> {

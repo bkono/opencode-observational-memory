@@ -16,6 +16,7 @@ const DEFAULTS = {
 } as const;
 
 interface PartialConfig {
+  agents?: unknown;
   observation?: {
     messageTokens?: unknown;
     model?: unknown;
@@ -49,6 +50,7 @@ export async function loadConfig(worktree: string): Promise<OMConfig> {
   await mkdir(stateDir, { recursive: true });
 
   return {
+    agents: resolveAgents(merged.agents),
     observation: {
       messageTokens:
         envPositiveInteger("OM_OBSERVATION_MESSAGE_TOKENS") ??
@@ -100,6 +102,7 @@ async function readConfigFile(path: string): Promise<PartialConfig> {
 
 function mergeConfig(base: PartialConfig, override: PartialConfig): PartialConfig {
   return {
+    agents: override.agents ?? base.agents,
     observation: {
       ...base.observation,
       ...override.observation,
@@ -117,6 +120,28 @@ function mergeConfig(base: PartialConfig, override: PartialConfig): PartialConfi
       ...override.storage,
     },
   };
+}
+
+function resolveAgents(value: unknown): string[] | "all" {
+  const envRaw = process.env.OM_AGENTS;
+  if (typeof envRaw === "string" && envRaw.length > 0) {
+    if (envRaw.toLowerCase() === "all") {
+      return "all";
+    }
+    const names = envRaw.split(",").map((s) => s.trim()).filter(Boolean);
+    return names.length > 0 ? names : "all";
+  }
+
+  if (value === "all" || value === undefined || value === null) {
+    return "all";
+  }
+
+  if (Array.isArray(value)) {
+    const names = value.filter((v): v is string => typeof v === "string" && v.length > 0);
+    return names.length > 0 ? names : "all";
+  }
+
+  return "all";
 }
 
 function envString(name: string): string | undefined {

@@ -1,6 +1,6 @@
 {
   "name": "@solvedbydev/opencode-observational-memory",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "OpenCode plugin implementing Mastra-style observational memory with observer/reflector append-log compaction",
   "type": "module",
   "main": "dist/index.js",

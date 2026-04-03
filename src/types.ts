@@ -1,6 +1,7 @@
 import type { Message, Part } from "@opencode-ai/sdk";
 
 export interface OMConfig {
+  agents: string[] | "all";
   observation: {
     messageTokens: number;
     model: string;
