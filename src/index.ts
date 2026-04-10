@@ -20,7 +20,7 @@ type SessionMessagesResult = {
   error?: unknown;
 };
 
-type CycleReason = "idle" | "messages.transform" | "compacting";
+type CycleReason = "idle" | "compacting";
 
 type UnobservedWindow = {
   messages: SessionMessage[];
@@ -84,14 +84,12 @@ export const ObservationalMemoryPlugin: Plugin = async ({ client, worktree }) =>
           : unobservedMessages;
 
         if (messagesToObserve.length === 0) {
-          if (cycleReason !== "messages.transform") {
-            await saveSessionState(config.storage.stateDir, {
-              ...state,
-              ...cycleBaseState,
-              observeTriggered: false,
-              reflectTriggered: false,
-            });
-          }
+          await saveSessionState(config.storage.stateDir, {
+            ...state,
+            ...cycleBaseState,
+            observeTriggered: false,
+            reflectTriggered: false,
+          });
           return;
         }
 
@@ -100,14 +98,12 @@ export const ObservationalMemoryPlugin: Plugin = async ({ client, worktree }) =>
           options?.forceObserve || unobservedTokens >= config.observation.messageTokens;
 
         if (!shouldObserve) {
-          if (cycleReason !== "messages.transform") {
-            await saveSessionState(config.storage.stateDir, {
-              ...state,
-              ...cycleBaseState,
-              observeTriggered: false,
-              reflectTriggered: false,
-            });
-          }
+          await saveSessionState(config.storage.stateDir, {
+            ...state,
+            ...cycleBaseState,
+            observeTriggered: false,
+            reflectTriggered: false,
+          });
           return;
         }
 
@@ -248,11 +244,11 @@ export const ObservationalMemoryPlugin: Plugin = async ({ client, worktree }) =>
 
       const allMessages = [...output.messages];
 
-      await runObservationCycle(sessionId, {
-        excludeLatestMessage: true,
-        reason: "messages.transform",
-      });
-
+      // Observation cycles are NOT run here — they run in session.idle only.
+      // This prevents a drift where the cursor advances (pruning messages) but
+      // the system prompt still has stale observations from system.transform.
+      // By only observing in session.idle, the system prompt and pruning cursor
+      // are always derived from the same state snapshot.
       const state = await loadSessionState(config.storage.stateDir, sessionId);
       const unobservedWindow = getUnobservedMessages(
         allMessages,
